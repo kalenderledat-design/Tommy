@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Haalt alle bedrijven in Menen (BE) op uit OpenStreetMap met adres en telefoonnummer.
 
-Uitvoer: data/menen_bedrijven.csv (Excel-vriendelijk, UTF-8 met BOM).
-Alleen standaardbibliotheek nodig:  python extract_menen_full.py
+Uitvoer: data/menen_bedrijven.xlsx (opgemaakt Excel-bestand) en data/menen_bedrijven.csv.
+Vereist: pip install openpyxl   daarna:  python extract_menen_full.py
 """
 import csv, json, sys, time, urllib.parse, urllib.request, urllib.error
 from pathlib import Path
 
 OUT = Path(__file__).parent / "data" / "menen_bedrijven.csv"
+XLSX = OUT.with_suffix(".xlsx")
 MIRRORS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
@@ -68,6 +69,54 @@ def row(el):
     }
 
 
+HEADERS = {"naam": "Naam", "categorie": "Categorie", "straat": "Straat", "huisnummer": "Nr",
+           "postcode": "Postcode", "gemeente": "Gemeente", "telefoon": "Telefoon", "gsm": "GSM",
+           "email": "E-mail", "website": "Website", "openingsuren": "Openingsuren",
+           "btw_nummer": "BTW-nummer", "lat": "Latitude", "lon": "Longitude", "osm_url": "Kaart (OSM)"}
+WIDTHS = {"naam": 38, "categorie": 24, "straat": 28, "huisnummer": 8, "postcode": 10, "gemeente": 14,
+          "telefoon": 20, "gsm": 20, "email": 34, "website": 40, "openingsuren": 40,
+          "btw_nummer": 16, "lat": 11, "lon": 11, "osm_url": 14}
+
+
+def write_xlsx(rows):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bedrijven Menen"
+    ws.append([HEADERS[f] for f in FIELDS])
+    for r in rows:
+        ws.append([r[f] for f in FIELDS])
+    head = PatternFill("solid", fgColor="1F4E78")
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = head
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+    ws.row_dimensions[1].height = 24
+    link = Font(color="0563C1", underline="single")
+    for i, f in enumerate(FIELDS, 1):
+        ws.column_dimensions[get_column_letter(i)].width = WIDTHS[f]
+    for row in ws.iter_rows(min_row=2):
+        for c, f in zip(row, FIELDS):
+            c.alignment = Alignment(vertical="top", wrap_text=f in ("openingsuren", "naam"))
+            v = str(c.value or "")
+            if f == "website" and v:
+                c.hyperlink = v if v.startswith("http") else "http://" + v
+                c.font = link
+            elif f == "email" and v:
+                c.hyperlink = "mailto:" + v.split(";")[0].strip()
+                c.font = link
+            elif f == "osm_url":
+                c.hyperlink, c.value, c.font = v, "Open kaart", link
+            elif f in ("telefoon", "gsm"):
+                c.number_format = "@"
+    ws.freeze_panes = "B2"
+    ws.auto_filter.ref = ws.dimensions
+    ws.sheet_view.zoomScale = 100
+    wb.save(XLSX)
+
+
 def main():
     rows = {r["osm_url"]: r for r in map(row, fetch())}
     rows = sorted(rows.values(), key=lambda r: (r["naam"].lower(), r["straat"]))
@@ -76,6 +125,7 @@ def main():
         w = csv.DictWriter(f, FIELDS, delimiter=";")
         w.writeheader()
         w.writerows(rows)
+    write_xlsx(rows)
     tel = sum(1 for r in rows if r["telefoon"] or r["gsm"])
     print(f"{len(rows)} bedrijven opgeslagen in {OUT} ({tel} met telefoonnummer)")
 
